@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """brain.py — the bot's LLM brain with MULTI-PROVIDER automatic failover.
 
-Provider pool (in order): numes.ai, then OpenRouter (free models), then Coarena.
+Provider pool (in order): numes.ai, OpenRouter (free), Coarena, 9Router (last).
 - Every entry is one (provider, key, model) combo.
 - On 502/timeout/empty-content -> skip to the next entry (next model).
 - On 401/402/403/429 (key problem) -> skip too; key rotation happens naturally
@@ -21,7 +21,8 @@ ENV = {}
 ENV_KEYS = ["TELEGRAM_BOT_TOKEN", "OWNER_CHAT_ID",
             "OPENAI_BASE_URL", "OPENAI_API_KEY", "NUMES_API_KEYS", "MODELS",
             "OPENROUTER_API_KEY", "OPENROUTER_MODELS",
-            "COARENA_API_KEY", "COARENA_MODELS"]
+            "COARENA_API_KEY", "COARENA_MODELS",
+            "ROUTER9_API_KEY", "ROUTER9_MODELS"]
 
 
 def load_env():
@@ -42,6 +43,7 @@ def load_env():
 
 OR_BASE = "https://openrouter.ai/api/v1"
 CA_BASE = "https://coarena.ai/api/v1"
+R9_BASE = "https://9router-production-af2f3af2.up.railway.app/v1"
 
 
 def _pool():
@@ -67,6 +69,12 @@ def _pool():
     if ca_key:
         for m in ca_models:
             pool.append({"base": CA_BASE, "key": ca_key, "model": m, "prov": "coarena"})
+    # --- provider 4 (last): 9Router (railway proxy, oc/* free models) ---
+    r9_key = ENV.get("ROUTER9_API_KEY", "").strip()
+    r9_models = [m.strip() for m in ENV.get("ROUTER9_MODELS", "").split(",") if m.strip()]
+    if r9_key:
+        for m in r9_models:
+            pool.append({"base": R9_BASE, "key": r9_key, "model": m, "prov": "9router"})
     return pool
 
 
