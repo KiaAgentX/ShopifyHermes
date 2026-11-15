@@ -10,7 +10,7 @@ Usage:
   python3 brain.py "soalat"
   python3 brain.py --selftest
 """
-import json, sys, time, urllib.error, urllib.request
+import json, os, sys, time, urllib.error, urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -18,12 +18,20 @@ ENV = {}
 
 
 def load_env():
+    """Fill ENV: .env file first, then real environment variables override
+    (so Railway/production env wins over the local .env file)."""
     global ENV
-    for line in HERE.joinpath(".env").read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            ENV[k.strip()] = v.strip()
+    if HERE.joinpath(".env").exists():
+        for line in HERE.joinpath(".env").read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                ENV[k.strip()] = v.strip()
+    for k in list(ENV.keys()) + ["TELEGRAM_BOT_TOKEN", "OWNER_CHAT_ID",
+                                 "OPENAI_BASE_URL", "OPENAI_API_KEY",
+                                 "NUMES_API_KEYS", "MODELS"]:
+        if os.environ.get(k):
+            ENV[k] = os.environ[k]
     return ENV
 
 

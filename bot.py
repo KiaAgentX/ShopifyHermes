@@ -3,16 +3,9 @@
 Run: nohup python3 bot.py > bot.log 2>&1 &
 """
 import json, threading, time, urllib.request
-from pathlib import Path
-from brain import Brain
+from brain import Brain, load_env
 
-HERE = Path(__file__).parent
-ENV = {}
-for line in HERE.joinpath(".env").read_text().splitlines():
-    line = line.strip()
-    if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1)
-        ENV[k.strip()] = v.strip()
+ENV = load_env()
 
 TOKEN = ENV["TELEGRAM_BOT_TOKEN"]
 API = f"https://api.telegram.org/bot{TOKEN}"
