@@ -32,7 +32,8 @@ python3 bot.py
 ```
 
 متغیرهای محیطی روی Railway (Raw Editor): همان کلیدهای `.env` — شامل
-`OPENROUTER_API_KEY` و `OPENROUTER_MODELS` برای تامین‌کننده‌ی دوم.
+`OPENROUTER_API_KEY` + `OPENROUTER_MODELS` و `COARENA_API_KEY` + `COARENA_MODELS`
+برای تامین‌کننده‌های دوم و سوم.
 
 ## معماری ضدخطا (brain)
 
@@ -40,13 +41,15 @@ python3 bot.py
 
 1. numes: همه مدل‌های `MODELS` × همه کلیدهای `NUMES_API_KEYS`
 2. OpenRouter: مدل‌های `OPENROUTER_MODELS` (فقط مدل‌های `:free`)
+3. Coarena: مدل‌های `COARENA_MODELS` (اعتبار رایگان $5 در روز)
 
 - خطای مدل (502/timeout/جواب خالی) → ورودی بعدی
 - خطای کلید (401/402/403/429) → ورودی بعدی (چرخش کلید طبیعی اتفاق می‌افتد)
 - ترکیب موفق آخر، دفعه بعد اول امتحان می‌شود
 
-> مدل‌های free روی OpenRouter چرخشی هستند؛ با اسکریپت زیر لیست تازه بگیرید:
-> `python3 /home/z/my-project/scripts/openrouter_probe.py`
+> مدل‌های free روی OpenRouter چرخشی هستند؛ با اسکریپت‌های زیر لیست تازه بگیرید:
+> `python3 /home/z/my-project/scripts/openrouter_probe.py` (OpenRouter)
+> `python3 /home/z/my-project/scripts/coarena_probe.py` (Coarena + تست feedback)
 
 ## امنیت
 

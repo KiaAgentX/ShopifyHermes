@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """brain.py — the bot's LLM brain with MULTI-PROVIDER automatic failover.
 
-Provider pool (in order): numes.ai first, then OpenRouter (free models).
+Provider pool (in order): numes.ai, then OpenRouter (free models), then Coarena.
 - Every entry is one (provider, key, model) combo.
 - On 502/timeout/empty-content -> skip to the next entry (next model).
 - On 401/402/403/429 (key problem) -> skip too; key rotation happens naturally
@@ -20,7 +20,8 @@ ENV = {}
 
 ENV_KEYS = ["TELEGRAM_BOT_TOKEN", "OWNER_CHAT_ID",
             "OPENAI_BASE_URL", "OPENAI_API_KEY", "NUMES_API_KEYS", "MODELS",
-            "OPENROUTER_API_KEY", "OPENROUTER_MODELS"]
+            "OPENROUTER_API_KEY", "OPENROUTER_MODELS",
+            "COARENA_API_KEY", "COARENA_MODELS"]
 
 
 def load_env():
@@ -40,6 +41,7 @@ def load_env():
 
 
 OR_BASE = "https://openrouter.ai/api/v1"
+CA_BASE = "https://coarena.ai/api/v1"
 
 
 def _pool():
@@ -59,6 +61,12 @@ def _pool():
     if or_key:
         for m in or_models:
             pool.append({"base": OR_BASE, "key": or_key, "model": m, "prov": "openrouter"})
+    # --- provider 3: Coarena (free $5/day credit) ---
+    ca_key = ENV.get("COARENA_API_KEY", "").strip()
+    ca_models = [m.strip() for m in ENV.get("COARENA_MODELS", "").split(",") if m.strip()]
+    if ca_key:
+        for m in ca_models:
+            pool.append({"base": CA_BASE, "key": ca_key, "model": m, "prov": "coarena"})
     return pool
 
 
