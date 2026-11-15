@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """brain.py — the bot's LLM brain with MULTI-PROVIDER automatic failover.
 
-Provider pool (in order): numes.ai, OpenRouter (free), Coarena, 9Router (last).
+Provider pool (in order): Coarena (fastest, free $5/day), numes.ai,
+OpenRouter (free), 9Router (last).
 - Every entry is one (provider, key, model) combo.
 - On 502/timeout/empty-content -> skip to the next entry (next model).
 - On 401/402/403/429 (key problem) -> skip too; key rotation happens naturally
@@ -12,7 +13,7 @@ Usage:
   python3 brain.py "soalat"
   python3 brain.py --selftest
 """
-import json, os, sys, time, urllib.error, urllib.request
+import json, os, re, sys, time, urllib.error, urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -47,9 +48,19 @@ R9_BASE = "https://9router-production-af2f3af2.up.railway.app/v1"
 
 
 def _pool():
-    """Flat ordered list of all (base, key, model) fallback entries."""
+    """Flat ordered list of all (base, key, model) fallback entries.
+
+    Order = real latency priority (from live probes):
+    Coarena (1.5-7s) -> numes (fast when warm) -> OpenRouter free -> 9Router.
+    """
     pool = []
-    # --- provider 1: numes.ai ---
+    # --- provider 1: Coarena (fastest, free $5/day credit) ---
+    ca_key = ENV.get("COARENA_API_KEY", "").strip()
+    ca_models = [m.strip() for m in ENV.get("COARENA_MODELS", "").split(",") if m.strip()]
+    if ca_key:
+        for m in ca_models:
+            pool.append({"base": CA_BASE, "key": ca_key, "model": m, "prov": "coarena"})
+    # --- provider 2: numes.ai ---
     base = ENV.get("OPENAI_BASE_URL", "").rstrip("/")
     keys = [k.strip() for k in ENV.get("NUMES_API_KEYS",
             ENV.get("OPENAI_API_KEY", "")).split(",") if k.strip()]
@@ -57,18 +68,12 @@ def _pool():
     for m in models:
         for k in keys:
             pool.append({"base": base, "key": k, "model": m, "prov": "numes"})
-    # --- provider 2: OpenRouter (free models) ---
+    # --- provider 3: OpenRouter (free models) ---
     or_key = ENV.get("OPENROUTER_API_KEY", "").strip()
     or_models = [m.strip() for m in ENV.get("OPENROUTER_MODELS", "").split(",") if m.strip()]
     if or_key:
         for m in or_models:
             pool.append({"base": OR_BASE, "key": or_key, "model": m, "prov": "openrouter"})
-    # --- provider 3: Coarena (free $5/day credit) ---
-    ca_key = ENV.get("COARENA_API_KEY", "").strip()
-    ca_models = [m.strip() for m in ENV.get("COARENA_MODELS", "").split(",") if m.strip()]
-    if ca_key:
-        for m in ca_models:
-            pool.append({"base": CA_BASE, "key": ca_key, "model": m, "prov": "coarena"})
     # --- provider 4 (last): 9Router (railway proxy, oc/* free models) ---
     r9_key = ENV.get("ROUTER9_API_KEY", "").strip()
     r9_models = [m.strip() for m in ENV.get("ROUTER9_MODELS", "").split(",") if m.strip()]
@@ -88,7 +93,8 @@ class Brain:
 
     def _call(self, base, key, model, messages, max_tokens=700, timeout=60):
         url = base + "/chat/completions"
-        payload = json.dumps({"model": model, "messages": messages, "max_tokens": max_tokens}).encode()
+        payload = json.dumps({"model": model, "messages": messages,
+                              "max_tokens": max_tokens, "temperature": 0.6}).encode()
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
         if "openrouter.ai" in base:
             headers["X-Title"] = "Hermes Shop"
@@ -101,6 +107,26 @@ class Brain:
             # some reasoning models burn the whole token budget -> empty content
             raise ValueError("empty content")
         return content, round(time.time() - t0, 1), body.get("usage", {})
+
+    @staticmethod
+    def _looks_broken(text, ref=""):
+        """Heuristic quality gate: catches empty/garbled/wrong-language LLM
+        output so failover moves to the next model instead of sending junk.
+        ref = the user's last message (used to detect language mismatch)."""
+        if not text or len(text.strip()) < 5:
+            return True
+        if "\ufffd" in text:
+            return True
+        if re.search(r"([A-Za-z\u0600-\u06FF])\1{4,}", text):   # e.g. هههههه/word runs
+            return True
+        # Persian question but a mostly-Latin answer -> wrong language, retry
+        if len(re.findall(r"[\u0600-\u06FF]", ref)) >= 10:
+            letters = re.findall(r"[A-Za-z\u0600-\u06FF]", text)
+            if letters:
+                latin = sum(1 for c in letters if c.isascii())
+                if latin / len(letters) > 0.6:
+                    return True
+        return False
 
     def ask(self, user_text, system=None, max_tokens=700):
         messages = []
@@ -117,15 +143,14 @@ class Brain:
             plan.insert(0, self.last_good)
 
         errors = []
+        fallback = None   # first (answer, meta) that answered but looked garbled
+        ref = messages[-1].get("content", "") if messages else ""
         for i in plan:
             e = self.pool[i]
+            meta = {"model": e["model"], "provider": e["prov"]}
             try:
                 answer, latency, usage = self._call(e["base"], e["key"], e["model"],
                                                     messages, max_tokens=max_tokens)
-                self.last_good = i
-                return answer, {"model": e["model"], "provider": e["prov"],
-                                "latency_s": latency,
-                                "tokens": f"{usage.get('prompt_tokens', '?')}+{usage.get('completion_tokens', '?')}"}
             except urllib.error.HTTPError as ex:
                 code = ex.code
                 detail = ""
@@ -135,8 +160,21 @@ class Brain:
                 except Exception:
                     pass
                 errors.append(f"{e['prov']}/{e['model']} http_{code} {detail}")
+                continue
             except Exception as ex:
                 errors.append(f"{e['prov']}/{e['model']} {type(ex).__name__}")
+                continue
+            meta.update(latency_s=latency,
+                        tokens=f"{usage.get('prompt_tokens', '?')}+{usage.get('completion_tokens', '?')}")
+            if self._looks_broken(answer, ref):
+                errors.append(f"{e['prov']}/{e['model']} garbled/low-quality (skipped)")
+                if fallback is None:
+                    fallback = (answer, meta)
+                continue
+            self.last_good = i
+            return answer, meta
+        if fallback is not None:      # something answered everywhere-garbled:
+            return fallback           # send the least-bad one instead of erroring
         raise RuntimeError("hamash kharab shod:\n  " + "\n  ".join(errors))
 
 
