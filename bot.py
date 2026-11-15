@@ -2,7 +2,7 @@
 """bot.py — Hermes Shop Telegram bot (polling loop + LLM brain with failover).
 Run: nohup python3 bot.py > bot.log 2>&1 &
 """
-import json, threading, time, urllib.request
+import json, threading, time, urllib.error, urllib.request
 from brain import Brain, load_env
 
 ENV = load_env()
@@ -16,6 +16,16 @@ SYSTEM = (
     "short and warm. The product catalog is being built right now — if asked what you sell, "
     "say the catalog is coming very soon and you can already chat and help."
 )
+
+
+def send_text(chat_id, text):
+    """Send with Markdown; if Telegram can't parse it (unbalanced *), resend plain."""
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    try:
+        tg("sendMessage", payload)
+    except urllib.error.HTTPError:
+        payload.pop("parse_mode")
+        tg("sendMessage", payload)
 
 
 def tg(method, payload=None, timeout=35):
@@ -36,10 +46,10 @@ def handle(update, memory, brain):
     print(f"[msg] chat={chat_id} from={name}: {text[:60]}", flush=True)
 
     if text.startswith("/start"):
-        tg("sendMessage", {"chat_id": chat_id, "text":
+        send_text(chat_id,
             f"سلام {name} 👋 من **Hermes Shop** هستم!\n\n"
             "فروشنده‌ی فروشگاه محصولات دیجیتال هستم — کتاب HTML، اسکیل MD، پرامپت JSON و بیشتر.\n"
-            "کاتالوگ داره آماده می‌شه، ولی از همین حالا می‌تونی باهام حرف بزنی 🛍️"})
+            "کاتالوگ داره آماده می‌شه، ولی از همین حالا می‌تونی باهام حرف بزنی 🛍️")
         return
 
     tg("sendChatAction", {"chat_id": chat_id, "action": "typing"})
@@ -54,7 +64,7 @@ def handle(update, memory, brain):
     except Exception as e:
         answer = "اوپس، الان همه‌ی مغزهایم خسته‌اند 😅 یه بار دیگر امتحان کن."
         print(f"[err] chat={chat_id}: {e}", flush=True)
-    tg("sendMessage", {"chat_id": chat_id, "text": answer})
+    send_text(chat_id, answer)
 
 
 def main():
